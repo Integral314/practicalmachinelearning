@@ -1,0 +1,105 @@
+---
+title: "Practical Machine Learning Project"
+author: "Trey Beeman"
+date: "April 24, 2016"
+output: html_document
+---
+### Abstract
+This project will develop a model to fit data taken from a fitness device to predict performance of a bicep curl.  There are 5 classes of performance: (Class A) exactly according to the specification, (Class B) throwing the elbows to the front, (Class C) lifting the dumbbell only halfway, (Class D) lowering the dumbbell only halfway, and (Class E) throwing the hips to the front.  The data was graciously provided by this source: http://groupware.les.inf.puc-rio.br/har 
+
+### Data
+
+The data is downloaded and loaded.
+```{r read data}
+url.train <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url.test <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(url.train, "./pmlTraining.csv"); download.file(url.test, "./pmlTesting.csv")
+training <- read.csv("./pmlTraining.csv", na.strings=c("NA","#DIV/0!","")); 
+testing <- read.csv("./pmlTesting.csv", na.strings=c("NA","#DIV/0!",""))
+```
+
+
+### Partition
+
+The data is partitioned to create a testing set for modelling.  The `test.build` set will be used to cross validate the `training` data.
+```{r partition}
+library(caret)
+set.seed(613603)
+inTrain <- createDataPartition(y = training$classe, p = 0.7, list = FALSE)
+train.build <- training[inTrain,]
+test.build <- training[-inTrain,]
+```
+
+### Cleaning the Data
+
+Variables with near zero variance are tested for and removed.  Modelling this data is problematic without checking for near zero variance.  Next, irrelevant variables are removed since they will not improve the model predictions.  Lastly, columns that 90+% NAs are removed.  
+```{r cleaning data}
+
+## Remove columns with near zero variance
+nsv <- nearZeroVar(train.build)
+train.build <- train.build[, -nsv]
+test.build <- test.build[, -nsv]
+testing <- testing[, -nsv]
+
+## Remove first 6 columns thaat don't make sense to this model
+train.build <- train.build[, -(1:6)]
+test.build <- test.build[, -(1:6)]
+testing <- testing[, -(1:6)]
+
+## Remove columns with mostly NAs
+isna <- is.na(train.build)
+Cmeans <- colMeans(isna)
+train.build <- train.build[Cmeans <= .9]
+test.build <- test.build[Cmeans <= .9]
+testing <- testing[Cmeans <= .9]
+```
+### Modelling
+
+Many types of models were attempted, but only the successful ones are represented here.  We begin by creating a decision tree.
+```{r rpart modelling}
+library(rpart)
+set.seed(31834)
+rpartFit <- rpart(classe ~ ., method = "class", data = train.build)
+predict.Rpart <- predict(rpartFit, test.build, type = "class")
+confusionMatrix(predict.Rpart, test.build$classe)
+library(rattle)
+suppressWarnings(fancyRpartPlot(rpartFit))
+```
+
+Next we will try a random forest model.
+
+```{r randomforest modelling}
+library(randomForest)
+set.seed(67484)
+rfFit <- randomForest(classe ~., data = train.build)
+predict.RF <- predict(rfFit, test.build)
+confusionMatrix(predict.RF, test.build$classe)
+plot(rfFit)
+```
+
+The plot shows that he Random Forest error falls significantly after approximately 50 trees.
+
+NOTE: We attempted Linear Discriminant Analysis, K-Nearest Neighbor and Gradient Boosted Machine modelling, however, these methods all were resource heavy models that provided little or no improvement on the random forest method.
+
+Finally, we will combine both the models with a random forest model attempt to increase accuracy.
+```{r combined modelling}
+set.seed(983346)
+combDF <- data.frame(predict.RF, predict.Rpart ,classe = test.build$classe)
+combFit <- train(classe ~ ., method = "rf", data = combDF)
+predict.comb <- predict(combFit, test.build)
+confusionMatrix(predict.comb, test.build$classe)$overall[1]
+```
+Accuracy is not improved, however.
+
+### Cross Validation and Out of Sample Error Analysis
+
+In the above models, we used `test.build` to cross validate the models and obtain our out of sample error.  The out of sample error rate is: 25.18% for the decision tree, and 0.4% for both the random forest and combined models.
+
+### Final Prediction
+
+So the random forest appears to have the best prediction even when combined with other models given that it has the lowest out of sample error rate and uses the least amount of resources to generate.  Therefore we compute our predictions.
+
+```{r final prediction}
+predict.Final <- predict(rfFit, testing)
+predict.Final
+```
